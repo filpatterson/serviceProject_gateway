@@ -1,16 +1,25 @@
 package Http;
 
-import Http.Unit.Process;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.lambdaworks.redis.RedisConnection;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import org.json.JSONObject;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
+import java.util.List;
 
 public class HttpGatewayContextHandler implements HttpHandler {
+    RedisConnection<String, String> redisConnection = null;
+    HttpUtility httpUtility = null;
+
+    public HttpGatewayContextHandler(RedisConnection<String, String> redisConnection, HttpUtility httpUtility) {
+        this.redisConnection = redisConnection;
+        this.httpUtility = httpUtility;
+    }
+
     /**
      * handle for all incoming requests
      * @param httpExchange REST service connector
@@ -77,9 +86,15 @@ public class HttpGatewayContextHandler implements HttpHandler {
                 return buffer.toString();
             } else {
                 System.err.println("Unknown content-type");
+                JSONObject jsonResponse = new JSONObject();
+                jsonResponse.put("error", "unknown content-type");
+                sendResponse(httpExchange, jsonResponse.toString());
             }
         } else {
             System.err.println("No content-type specified");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "content-type not specified");
+            sendResponse(httpExchange, jsonResponse.toString());
         }
         return null;
     }
@@ -95,16 +110,84 @@ public class HttpGatewayContextHandler implements HttpHandler {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode node = objectMapper.readValue(requestPayload, ObjectNode.class);
 
-        //  start process with taken from JSON command name
-        Process initializedProcess = new Process(node.get("functionName").asText());
-        initializedProcess.getProcessArguments().put("amount", node.get("amount").asText());
-        processStorage.put(initializedProcess.getId(), initializedProcess);
+        //  get name of requested service
+        String nameOfService = node.get("functionName").asText();
+        if(nameOfService == null) {
+            System.err.println("invalid request");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "function name not found in request");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
+        }
 
-        //  form response JSON payload
-        String response;
-        response = objectMapper.writeValueAsString(initializedProcess);
+        if(httpExchange.getRequestHeaders().containsKey("Service-Call")) {
+            if(httpExchange.getRequestHeaders().get("Service-Call").get(0).equals("true")) {
+                String addressOfService = node.get("address").asText();
+                if(!redisConnection.exists(addressOfService + "_mailboxSize")) {
+                    redisConnection.lpush(nameOfService, addressOfService);
+                    redisConnection.set(addressOfService + "_mailboxSize", "0");
+                }
+                JSONObject jsonResponse = new JSONObject();
+                jsonResponse.put("status", "successful connection to gateway" + addressOfService);
+                sendResponse(httpExchange, jsonResponse.toString());
+                return;
+            }
+        }
 
-        sendResponse(httpExchange, response);
+        //  find how many services are there with such command
+        long amountOfServices = redisConnection.llen(nameOfService);
+
+        //  if none then give error
+        if(amountOfServices == 0) {
+            System.err.println("no services found");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "not found service with such function name");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
+        }
+
+        //  check list of all services with such functionality
+        List<String> availableServicesRoutes = redisConnection.lrange(nameOfService, 0, amountOfServices - 1);
+
+        //  find least occupied service at moment
+        Integer leastMailboxSize = null;
+        String leastOccupiedService = null;
+        for(int i = 0; i < availableServicesRoutes.size(); i++) {
+            int mailboxSize = Integer.parseInt(redisConnection.get(availableServicesRoutes.get(i) + "_mailboxSize"));
+            if(leastMailboxSize == null)
+                leastMailboxSize = mailboxSize;
+            if(leastOccupiedService == null)
+                leastOccupiedService = availableServicesRoutes.get(i);
+            if(leastMailboxSize > mailboxSize)
+                leastOccupiedService = availableServicesRoutes.get(i);
+        }
+
+        String serviceResponse = httpUtility.sendJsonPost(leastOccupiedService, requestPayload);
+        System.out.println(serviceResponse);
+        if(serviceResponse == null) {
+            System.err.println("there is no response received");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "no response to POST from service");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
+        }
+
+        redisConnection.set(leastOccupiedService + "_mailboxSize", String.valueOf(++leastMailboxSize));
+
+        node = objectMapper.readValue(serviceResponse, ObjectNode.class);
+        String id = node.get("id").asText();
+
+        if(id == null) {
+            System.err.println("response has no ID");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "service response to POST has no ID");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
+        }
+
+        redisConnection.set(id, leastOccupiedService);
+
+        sendResponse(httpExchange, serviceResponse);
     }
 
     /**
@@ -118,33 +201,36 @@ public class HttpGatewayContextHandler implements HttpHandler {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode node = objectMapper.readValue(requestPayload, ObjectNode.class);
 
-        //  check if such process exists in storage
-        if(processStorage.containsKey(node.get("id").asLong())) {
-            //  get existing process from storage
-            Process requestedProcess = processStorage.get(node.get("id").asLong());
-
-            //  set execution process status
-            requestedProcess.setStatus("building");
-
-            //  perform actions depending on payload fields
-            if(node.has("firstCurrency")) {
-                requestedProcess.getProcessArguments().put("firstCurrency", node.get("firstCurrency").asText());
-            } else if (node.has("secondCurrency")) {
-                requestedProcess.getProcessArguments().put("secondCurrency", node.get("secondCurrency").asText());
-            } else if (node.has("source")) {
-                requestedProcess.getProcessArguments().put("source", node.get("source").asText());
-            } else if (node.has("finalize")) {
-                requestedProcess.setStatus("processing");
-            }
-
-            //  make json-formatted string
-            String response;
-            response = objectMapper.writeValueAsString(requestedProcess);
-
-            sendResponse(httpExchange, response);
-        } else {
-            System.err.println("there is no such process");
+        String packetIndex = node.get("id").asText();
+        if(packetIndex == null) {
+            System.err.println("id in PUT request is not found");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "not found ID in PUT request");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
         }
+
+        //  find how many services are there with such command
+        String routeToService = redisConnection.get(packetIndex);
+        System.out.println(packetIndex);
+        if(routeToService == null) {
+            System.err.println("there is no process on any service with such ID");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "no process with such ID");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
+        }
+
+        String serviceResponse = httpUtility.sendJsonPut(routeToService, requestPayload);
+        if(serviceResponse == null) {
+            System.err.println("no answer on PUT request");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "no response to PUT request");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
+        }
+
+        sendResponse(httpExchange, serviceResponse);
     }
 
     /**
@@ -158,39 +244,43 @@ public class HttpGatewayContextHandler implements HttpHandler {
                 split("\\?")[1].
                 split("=")[1]);
 
-        //  check if there is such id
-        if(processStorage.containsKey(requestedIndex)) {
-            //  get requested id
-            Process requestedProcess = processStorage.get(requestedIndex);
-
-            //  if process is not ready for transmission then inform client about it
-            if(!requestedProcess.getStatus().equals("processing")){
-                System.err.println("process has not received all required arguments");
-
-                //  inform client that process is unfinished
-                String response = "{\"response\":undone}";
-                sendResponse(httpExchange, response);
-                return;
-            }
-
-            //  set status of process to "done"
-            requestedProcess.setStatus("done");
-
-            //  get all arguments of process
-            HashMap<String, String> arguments = requestedProcess.getProcessArguments();
-
-            //  calculate result
-            int result = 12;
-
-            //  give response to client
-            String response = "{\"response\":" + result + "}";
-            sendResponse(httpExchange, response);
-
-            //  remove process from storage
-            processStorage.remove(requestedIndex);
-        } else {
-            System.err.println("there is no such process");
+        //  find how many services are there with such command
+        String routeToService = redisConnection.get(String.valueOf(requestedIndex));
+        if(routeToService == null) {
+            System.err.println("there is no process on any service with such ID");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "no process with such ID");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
         }
+
+        String serviceResponse = httpUtility.sendJsonGet(routeToService+ "?id=" + requestedIndex);
+        if(serviceResponse == null) {
+            System.err.println("there is no response received to GET");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "no response from service to GET");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
+        }
+
+        int mailboxSize = Integer.parseInt(redisConnection.get(routeToService + "_mailboxSize"));
+        redisConnection.set(routeToService + "_mailboxSize", String.valueOf(--mailboxSize));
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode node = objectMapper.readValue(serviceResponse, ObjectNode.class);
+        String responseId = node.get("id").asText();
+
+        if(responseId == null) {
+            System.err.println("response has no ID");
+            JSONObject jsonResponse = new JSONObject();
+            jsonResponse.put("error", "response from service to GET has no ID");
+            sendResponse(httpExchange, jsonResponse.toString());
+            return;
+        }
+
+        redisConnection.del(responseId);
+
+        sendResponse(httpExchange, serviceResponse);
     }
 
     /**

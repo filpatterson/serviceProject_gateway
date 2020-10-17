@@ -10,6 +10,7 @@ import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.BasicResponseHandler;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
+import org.json.JSONObject;
 
 import java.io.IOException;
 import java.net.URI;
@@ -38,9 +39,34 @@ public class HttpUtility {
         return response.body();
     }
 
-    public void sendJsonPost(String destinationPage, String functionName, String firstArgument) throws IOException {
-        String payload = "{\"functionName\":\"" + functionName +"\",\"amount\":"+ firstArgument +"}";
-        StringEntity entity = new StringEntity(payload,
+    public String sendJsonPost(String destinationPage, String functionName, String firstArgument) throws IOException {
+        JSONObject jsonRequest = new JSONObject();
+        jsonRequest.put("functionName", functionName);
+        jsonRequest.put("amount", firstArgument);
+        return sendJsonPost(destinationPage, jsonRequest.toString());
+    }
+
+    public String sendJsonPut(String destinationPage, Long id, String nameOfArgument, String argumentValue) throws IOException {
+        JSONObject jsonRequest = new JSONObject();
+        jsonRequest.put("id", id);
+        jsonRequest.put(nameOfArgument, argumentValue);
+        return sendJsonPut(destinationPage, jsonRequest.toString());
+    }
+
+    public String sendJsonGet(String destinationPageWithId) throws IOException {
+        CloseableHttpClient httpClient = HttpClients.createDefault();
+        HttpGet request = new HttpGet(destinationPageWithId);
+
+        CloseableHttpResponse response = httpClient.execute(request);
+        ResponseHandler<String> handler = new BasicResponseHandler();
+        String responsePayload = handler.handleResponse(response);
+        httpClient.close();
+        response.close();
+        return responsePayload;
+    }
+
+    public String sendJsonPost(String destinationPage, String jsonRequest) throws IOException {
+        StringEntity entity = new StringEntity(jsonRequest,
                 ContentType.APPLICATION_JSON);
 
         CloseableHttpClient httpClient = HttpClients.createDefault();
@@ -51,12 +77,14 @@ public class HttpUtility {
 
         CloseableHttpResponse response = httpClient.execute(request);
         ResponseHandler<String> handler = new BasicResponseHandler();
-        System.out.println(handler.handleResponse(response));
+        String responsePayload = handler.handleResponse(response);
+        httpClient.close();
+        response.close();
+        return responsePayload;
     }
 
-    public void sendJsonPut(String destinationPage, Long id, String nameOfArgument, String argumentValue) throws IOException {
-        String payload = "{\"id\":" + id + ",\"" + nameOfArgument + "\":\"" + argumentValue + "\"}";
-        StringEntity entity = new StringEntity(payload,
+    public String sendJsonPut(String destinationPage, String jsonRequest) throws IOException {
+        StringEntity entity = new StringEntity(jsonRequest,
                 ContentType.APPLICATION_JSON);
 
         CloseableHttpClient httpClient = HttpClients.createDefault();
@@ -67,15 +95,9 @@ public class HttpUtility {
 
         CloseableHttpResponse response = httpClient.execute(request);
         ResponseHandler<String> handler = new BasicResponseHandler();
-        System.out.println(handler.handleResponse(response));
-    }
-
-    public void sendJsonGet(String destinationPageWithId) throws IOException {
-        CloseableHttpClient httpClient = HttpClients.createDefault();
-        HttpGet request = new HttpGet(destinationPageWithId);
-
-        CloseableHttpResponse response = httpClient.execute(request);
-        ResponseHandler<String> handler = new BasicResponseHandler();
-        System.out.println(handler.handleResponse(response));
+        String responsePayload = handler.handleResponse(response);
+        httpClient.close();
+        response.close();
+        return responsePayload;
     }
 }

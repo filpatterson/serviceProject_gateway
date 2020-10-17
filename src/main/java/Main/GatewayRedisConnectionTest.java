@@ -20,7 +20,17 @@ public class GatewayRedisConnectionTest {
         //  simple connection
         RedisConnection<String, String> connection = redisClient.connect();
 
-        System.out.println(Thread.activeCount());
+        for(int i = 0; i < 100; i++) {
+            connection.del("foo" + i);
+            connection.del("async foo" + i);
+        }
+
+        connection.del("hash foo");
+        connection.del("foo");
+
+        System.out.println(connection.dbsize());
+
+//        System.out.println(Thread.activeCount());
 
 //        for(int i = 0; i < 100; i++) {
 //            int finalI = i;
@@ -58,27 +68,32 @@ public class GatewayRedisConnectionTest {
 //            }).start();
 //        }
 
-        //  these commands rewrite each other, so be careful with updating data
-        connection.set("hash foo", "http://localhost:90");
-        connection.set("hash foo", "convert");
-        connection.set("hash foo", "15");
-        System.out.println(connection.get("hash foo"));
-
-        //  elements can be stored as hashmap, elements can be updated and edited
-        HashMap<String, String> value = new HashMap<>();
-        value.put("command", "convert");
-        connection.hmset("http://localhost:09", value);
-        System.out.println(connection.hmget("http://localhost:09", "command"));
-
-        //  this part will update previous 4 lines
-        value.put("command", "amother");
-        value.put("speed", "of sound");
-        connection.hmset("http://localhost:09", value);
-        System.out.println(connection.hmget("http://localhost:09", "speed", "command"));
-
-        System.out.println(connection.dbsize());
-        System.out.println(connection.get("foo"));
-        System.out.println("Connected to Redis");
+//        //  these commands rewrite each other, so be careful with updating data
+//        connection.set("hash foo", "http://localhost:90");
+//        connection.set("hash foo", "convert");
+//        connection.set("hash foo", "15");
+//        System.out.println(connection.get("hash foo"));
+//
+//        //  elements can be stored as hashmap, elements can be updated and edited
+//        HashMap<String, String> value = new HashMap<>();
+//        value.put("command", "convert");
+//        connection.hmset("http://localhost:09", value);
+//        System.out.println(connection.hmget("http://localhost:09", "command"));
+//
+//        //  this part will update previous 4 lines
+//        value.put("command", "amother");
+//        value.put("speed", "of sound");
+//        connection.hmset("http://localhost:09", value);
+//        System.out.println(connection.hmget("http://localhost:09", "speed", "command"));
+//
+//        //  delete requested elements from hashmap
+//        connection.hdel("http://localhost:09", "speed", "command");
+//        System.out.println(connection.hmget("http://localhost:09", "speed", "command"));
+//        System.out.println(connection.get("http://localhost:10"));
+//
+//        System.out.println(connection.dbsize());
+//        System.out.println(connection.get("foo"));
+//        System.out.println("Connected to Redis");
 
 //        connection.close();
 //        redisClient.shutdown();
