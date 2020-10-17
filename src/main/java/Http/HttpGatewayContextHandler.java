@@ -10,9 +10,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 
-public class HttpConvertContextHandler implements HttpHandler {
-    HashMap<Long, Process> processStorage = new HashMap<>();
-
+public class HttpGatewayContextHandler implements HttpHandler {
     /**
      * handle for all incoming requests
      * @param httpExchange REST service connector
