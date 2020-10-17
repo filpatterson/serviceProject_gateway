@@ -17,6 +17,7 @@ public class GatewayInstance {
         RedisClient redisClient = new RedisClient(
                 RedisURI.create("redis://@localhost:6379"));
 
+        //  create http server that will handle all incoming requests and responses
         HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 8003), 0);
         ThreadPoolExecutor threadPoolExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(4);
         server.createContext("/", new HttpGatewayContextHandler(redisClient.connect(), new HttpUtility()));

@@ -15,6 +15,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
     RedisConnection<String, String> redisConnection = null;
     HttpUtility httpUtility = null;
 
+    //  constructor to establish connection with db and with redis
     public HttpGatewayContextHandler(RedisConnection<String, String> redisConnection, HttpUtility httpUtility) {
         this.redisConnection = redisConnection;
         this.httpUtility = httpUtility;
@@ -110,7 +111,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode node = objectMapper.readValue(requestPayload, ObjectNode.class);
 
-        //  get name of requested service
+        //  get name of requested service and make error response if none
         String nameOfService = node.get("functionName").asText();
         if(nameOfService == null) {
             System.err.println("invalid request");
@@ -120,13 +121,20 @@ public class HttpGatewayContextHandler implements HttpHandler {
             return;
         }
 
+        //  check if received request is one for establishing connection to service
         if(httpExchange.getRequestHeaders().containsKey("Service-Call")) {
             if(httpExchange.getRequestHeaders().get("Service-Call").get(0).equals("true")) {
+
+                //  get address of service
                 String addressOfService = node.get("address").asText();
+
+                //  append route to service in array and initialize queue size for this service
                 if(!redisConnection.exists(addressOfService + "_mailboxSize")) {
                     redisConnection.lpush(nameOfService, addressOfService);
                     redisConnection.set(addressOfService + "_mailboxSize", "0");
                 }
+
+                //  make response of successful connection establishment for service
                 JSONObject jsonResponse = new JSONObject();
                 jsonResponse.put("status", "successful connection to gateway" + addressOfService);
                 sendResponse(httpExchange, jsonResponse.toString());
@@ -134,10 +142,8 @@ public class HttpGatewayContextHandler implements HttpHandler {
             }
         }
 
-        //  find how many services are there with such command
+        //  find how many services are there with such command and send error if none
         long amountOfServices = redisConnection.llen(nameOfService);
-
-        //  if none then give error
         if(amountOfServices == 0) {
             System.err.println("no services found");
             JSONObject jsonResponse = new JSONObject();
@@ -153,17 +159,22 @@ public class HttpGatewayContextHandler implements HttpHandler {
         Integer leastMailboxSize = null;
         String leastOccupiedService = null;
         for(int i = 0; i < availableServicesRoutes.size(); i++) {
+            //  get service mailbox size
             int mailboxSize = Integer.parseInt(redisConnection.get(availableServicesRoutes.get(i) + "_mailboxSize"));
-            if(leastMailboxSize == null)
+            //  initialize local variables if they're not yet
+            if(leastMailboxSize == null || leastOccupiedService == null){
                 leastMailboxSize = mailboxSize;
-            if(leastOccupiedService == null)
                 leastOccupiedService = availableServicesRoutes.get(i);
+            }
+            //  if mailbox of service is less than current one, then save it
             if(leastMailboxSize > mailboxSize)
                 leastOccupiedService = availableServicesRoutes.get(i);
         }
 
+        //  redirect request to service
         String serviceResponse = httpUtility.sendJsonPost(leastOccupiedService, requestPayload);
-        System.out.println(serviceResponse);
+
+        //  if there is no response then send error
         if(serviceResponse == null) {
             System.err.println("there is no response received");
             JSONObject jsonResponse = new JSONObject();
@@ -172,11 +183,12 @@ public class HttpGatewayContextHandler implements HttpHandler {
             return;
         }
 
+        //  update service mailbox size increasing it by one
         redisConnection.set(leastOccupiedService + "_mailboxSize", String.valueOf(++leastMailboxSize));
 
+        //  deserialize response, get id and give error if there is no ID
         node = objectMapper.readValue(serviceResponse, ObjectNode.class);
         String id = node.get("id").asText();
-
         if(id == null) {
             System.err.println("response has no ID");
             JSONObject jsonResponse = new JSONObject();
@@ -185,8 +197,10 @@ public class HttpGatewayContextHandler implements HttpHandler {
             return;
         }
 
+        //  register process in redis
         redisConnection.set(id, leastOccupiedService);
 
+        //  redirect response to client
         sendResponse(httpExchange, serviceResponse);
     }
 
@@ -201,6 +215,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode node = objectMapper.readValue(requestPayload, ObjectNode.class);
 
+        //  check if there is ID and give error if none
         String packetIndex = node.get("id").asText();
         if(packetIndex == null) {
             System.err.println("id in PUT request is not found");
@@ -210,9 +225,8 @@ public class HttpGatewayContextHandler implements HttpHandler {
             return;
         }
 
-        //  find how many services are there with such command
+        //  find how many services are there with such command, send error if none
         String routeToService = redisConnection.get(packetIndex);
-        System.out.println(packetIndex);
         if(routeToService == null) {
             System.err.println("there is no process on any service with such ID");
             JSONObject jsonResponse = new JSONObject();
@@ -221,6 +235,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
             return;
         }
 
+        //  redirect request, get response, send error if there none
         String serviceResponse = httpUtility.sendJsonPut(routeToService, requestPayload);
         if(serviceResponse == null) {
             System.err.println("no answer on PUT request");
@@ -230,6 +245,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
             return;
         }
 
+        //  redirect response to client
         sendResponse(httpExchange, serviceResponse);
     }
 
@@ -254,6 +270,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
             return;
         }
 
+        //  send get request and if there is no response - send error
         String serviceResponse = httpUtility.sendJsonGet(routeToService+ "?id=" + requestedIndex);
         if(serviceResponse == null) {
             System.err.println("there is no response received to GET");
@@ -263,13 +280,16 @@ public class HttpGatewayContextHandler implements HttpHandler {
             return;
         }
 
+        //  decrement size of service mailbox
         int mailboxSize = Integer.parseInt(redisConnection.get(routeToService + "_mailboxSize"));
         redisConnection.set(routeToService + "_mailboxSize", String.valueOf(--mailboxSize));
 
+        //  deserialize response
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode node = objectMapper.readValue(serviceResponse, ObjectNode.class);
-        String responseId = node.get("id").asText();
 
+        //  get id and send error if there is none
+        String responseId = node.get("id").asText();
         if(responseId == null) {
             System.err.println("response has no ID");
             JSONObject jsonResponse = new JSONObject();
@@ -278,8 +298,8 @@ public class HttpGatewayContextHandler implements HttpHandler {
             return;
         }
 
+        //  remove process from redis and redirect response to client
         redisConnection.del(responseId);
-
         sendResponse(httpExchange, serviceResponse);
     }
 

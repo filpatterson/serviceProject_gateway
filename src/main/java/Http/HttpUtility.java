@@ -13,10 +13,7 @@ import org.apache.http.impl.client.HttpClients;
 import org.json.JSONObject;
 
 import java.io.IOException;
-import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 
 /**
  * Class for making http requests
@@ -26,19 +23,13 @@ public class HttpUtility {
     private final HttpClient client = HttpClient.newHttpClient();
 
     /**
-     * send simple GET request without header specifications and additional info
-     * @param destinationPage page for requesting data from
-     * @return data obtained as result of GET request to the page
-     * @throws IOException error in I/O streams of application
-     * @throws InterruptedException error in threading
+     * send JSON formatted POST request that will start discussion about
+     * @param destinationPage where request must be delivered
+     * @param functionName name of function that will be called remotely
+     * @param firstArgument first argument of function to be delivered
+     * @return response to request
+     * @throws IOException i/o error
      */
-    public String sendGet(String destinationPage) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(destinationPage)).GET().build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-        return response.body();
-    }
-
     public String sendJsonPost(String destinationPage, String functionName, String firstArgument) throws IOException {
         JSONObject jsonRequest = new JSONObject();
         jsonRequest.put("functionName", functionName);
@@ -46,6 +37,15 @@ public class HttpUtility {
         return sendJsonPost(destinationPage, jsonRequest.toString());
     }
 
+    /**
+     * send JSON formatted PUT request that will continue discussion
+     * @param destinationPage where request must be delivered
+     * @param id index of process that will be continued
+     * @param nameOfArgument name of argument that must be delivered in JSON
+     * @param argumentValue value of argument
+     * @return response to request
+     * @throws IOException i/o error
+     */
     public String sendJsonPut(String destinationPage, Long id, String nameOfArgument, String argumentValue) throws IOException {
         JSONObject jsonRequest = new JSONObject();
         jsonRequest.put("id", id);
@@ -53,6 +53,12 @@ public class HttpUtility {
         return sendJsonPut(destinationPage, jsonRequest.toString());
     }
 
+    /**
+     * send JSON formatted GET request that will finish discussion and get result
+     * @param destinationPageWithId where request will be delivered and index of process
+     * @return response to request
+     * @throws IOException i/o error
+     */
     public String sendJsonGet(String destinationPageWithId) throws IOException {
         CloseableHttpClient httpClient = HttpClients.createDefault();
         HttpGet request = new HttpGet(destinationPageWithId);
@@ -65,6 +71,13 @@ public class HttpUtility {
         return responsePayload;
     }
 
+    /**
+     * send POST request that will start discussion with service
+     * @param destinationPage where request must be delivered
+     * @param jsonRequest JSON request
+     * @return response to request
+     * @throws IOException i/o error
+     */
     public String sendJsonPost(String destinationPage, String jsonRequest) throws IOException {
         StringEntity entity = new StringEntity(jsonRequest,
                 ContentType.APPLICATION_JSON);
@@ -83,6 +96,13 @@ public class HttpUtility {
         return responsePayload;
     }
 
+    /**
+     * send PUT request that will continue discussion with service
+     * @param destinationPage where request must be delivered
+     * @param jsonRequest JSON request
+     * @return response to request
+     * @throws IOException i/o error
+     */
     public String sendJsonPut(String destinationPage, String jsonRequest) throws IOException {
         StringEntity entity = new StringEntity(jsonRequest,
                 ContentType.APPLICATION_JSON);
