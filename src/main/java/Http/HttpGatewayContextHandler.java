@@ -136,7 +136,8 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
                 //  make response of successful connection establishment for service
                 JSONObject jsonResponse = new JSONObject();
-                jsonResponse.put("status", "successful connection to gateway" + addressOfService);
+                jsonResponse.put("status", "successful connection to gateway");
+                jsonResponse.put("address", addressOfService);
                 sendResponse(httpExchange, jsonResponse.toString());
                 return;
             }
@@ -262,6 +263,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
         //  find how many services are there with such command
         String routeToService = redisConnection.get(String.valueOf(requestedIndex));
+        System.out.println(requestedIndex);
         if(routeToService == null) {
             System.err.println("there is no process on any service with such ID");
             JSONObject jsonResponse = new JSONObject();
