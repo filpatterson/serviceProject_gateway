@@ -263,7 +263,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
         //  find how many services are there with such command
         String routeToService = redisConnection.get(String.valueOf(requestedIndex));
-        System.out.println(requestedIndex);
+
         if(routeToService == null) {
             System.err.println("there is no process on any service with such ID");
             JSONObject jsonResponse = new JSONObject();
