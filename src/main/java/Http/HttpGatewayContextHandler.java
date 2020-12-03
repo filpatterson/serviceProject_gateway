@@ -12,8 +12,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class HttpGatewayContextHandler implements HttpHandler {
-    RedisConnection<String, String> redisConnection = null;
-    HttpUtility httpUtility = null;
+    //  redis connection entity for performing all actions
+    // note: to make this thing work, launch at docker Redis image
+    RedisConnection<String, String> redisConnection;
+
+    //  instance of utility for HTTP operations;
+    HttpUtility httpUtility;
 
     //  constructor to establish connection with db and with redis
     public HttpGatewayContextHandler(RedisConnection<String, String> redisConnection, HttpUtility httpUtility) {
@@ -22,7 +26,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
     }
 
     /**
-     * handle for all incoming requests
+     * handle for all incoming to the gateway requests
      * @param httpExchange REST service connector
      */
     @Override
@@ -43,9 +47,9 @@ public class HttpGatewayContextHandler implements HttpHandler {
             }
 
             //  handle request basing on type of request
-            if("POST".equals(httpExchange.getRequestMethod())) {
+            if ("POST".equals(httpExchange.getRequestMethod())) {
                 handlePostResponse(httpExchange, requestBody);
-            } else if("PUT".equals(httpExchange.getRequestMethod())) {
+            } else if ("PUT".equals(httpExchange.getRequestMethod())) {
                 handlePutResponse(httpExchange, requestBody);
             }
         } catch (Exception e) {
@@ -56,7 +60,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
     /**
      * get payload from incoming request
      * @param httpExchange REST service connector
-     * @return string object containing payload of incoming request
+     * @return string formatted payload of request
      * @throws IOException error in process of reading request
      */
     private String getRequestPayload(HttpExchange httpExchange) throws IOException {
@@ -65,7 +69,9 @@ public class HttpGatewayContextHandler implements HttpHandler {
             //  check content to be equal to json formatted data
             if(httpExchange.getRequestHeaders().get("Content-Type").get(0).equals("application/json")){
                 //  open stream for getting UTF-8 formatted characters
-                InputStreamReader inputStreamReader = new InputStreamReader(httpExchange.getRequestBody(), StandardCharsets.UTF_8);
+                InputStreamReader inputStreamReader = new InputStreamReader(
+                        httpExchange.getRequestBody(), StandardCharsets.UTF_8
+                );
 
                 //  insert stream to buffer for reading through input stream
                 BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
@@ -86,16 +92,10 @@ public class HttpGatewayContextHandler implements HttpHandler {
                 //  return string-formatted data
                 return buffer.toString();
             } else {
-                System.err.println("Unknown content-type");
-                JSONObject jsonResponse = new JSONObject();
-                jsonResponse.put("error", "unknown content-type");
-                sendResponse(httpExchange, jsonResponse.toString());
+                sendErrorResponse(httpExchange, "Content-Type error: content-type is unknown");
             }
         } else {
-            System.err.println("No content-type specified");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "content-type not specified");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(httpExchange, "Content-Type error: no content-type specification");
         }
         return null;
     }
@@ -114,24 +114,25 @@ public class HttpGatewayContextHandler implements HttpHandler {
         //  get name of requested service and make error response if none
         String nameOfService = node.get("functionName").asText();
         if(nameOfService == null) {
-            System.err.println("invalid request");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "function name not found in request");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(httpExchange, "invalid POST request: function name not found in request");
             return;
         }
 
-        //  check if received request is one for establishing connection to service
+        //  check if received request is one for establishing connection between gateway and service
         if(httpExchange.getRequestHeaders().containsKey("Service-Call")) {
             if(httpExchange.getRequestHeaders().get("Service-Call").get(0).equals("true")) {
 
                 //  get address of service
                 String addressOfService = node.get("address").asText();
 
-                //  append route to service in array and initialize queue size for this service
+                //  push service address to the Redis and create counter for service current load state
                 if(!redisConnection.exists(addressOfService + "_mailboxSize")) {
                     redisConnection.lpush(nameOfService, addressOfService);
                     redisConnection.set(addressOfService + "_mailboxSize", "0");
+                } else {
+                //  if there already is such service then send error message
+                    sendErrorResponse(httpExchange, "REDIS error: service with such address exists");
+                    return;
                 }
 
                 //  make response of successful connection establishment for service
@@ -146,30 +147,34 @@ public class HttpGatewayContextHandler implements HttpHandler {
         //  find how many services are there with such command and send error if none
         long amountOfServices = redisConnection.llen(nameOfService);
         if(amountOfServices == 0) {
-            System.err.println("no services found");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "not found service with such function name");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(
+                    httpExchange, "invalid POST request: not found service with such function name"
+            );
             return;
         }
 
-        //  check list of all services with such functionality
+        //  get all elements that are registered in Redis for this command
         List<String> availableServicesRoutes = redisConnection.lrange(nameOfService, 0, amountOfServices - 1);
 
-        //  find least occupied service at moment
+        //  initialize variables for finding least occupied service
         Integer leastMailboxSize = null;
         String leastOccupiedService = null;
+
+        //  find least occupied service at moment
         for(int i = 0; i < availableServicesRoutes.size(); i++) {
             //  get service mailbox size
             int mailboxSize = Integer.parseInt(redisConnection.get(availableServicesRoutes.get(i) + "_mailboxSize"));
+
             //  initialize local variables if they're not yet
             if(leastMailboxSize == null || leastOccupiedService == null){
                 leastMailboxSize = mailboxSize;
                 leastOccupiedService = availableServicesRoutes.get(i);
             }
+
             //  if mailbox of service is less than current one, then save it
-            if(leastMailboxSize > mailboxSize)
+            if(leastMailboxSize > mailboxSize) {
                 leastOccupiedService = availableServicesRoutes.get(i);
+            }
         }
 
         //  redirect request to service
@@ -177,24 +182,20 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
         //  if there is no response then send error
         if(serviceResponse == null) {
-            System.err.println("there is no response received");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "no response to POST from service");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(
+                    httpExchange, "invalid POST service response: no response to POST from service"
+            );
             return;
         }
 
         //  update service mailbox size increasing it by one
         redisConnection.set(leastOccupiedService + "_mailboxSize", String.valueOf(++leastMailboxSize));
 
-        //  deserialize response, get id and give error if there is no ID
+        //  deserialize response, get ID and give error if there is no ID
         node = objectMapper.readValue(serviceResponse, ObjectNode.class);
         String id = node.get("id").asText();
         if(id == null) {
-            System.err.println("response has no ID");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "service response to POST has no ID");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(httpExchange, "invalid POST service response: response has no ID");
             return;
         }
 
@@ -219,30 +220,23 @@ public class HttpGatewayContextHandler implements HttpHandler {
         //  check if there is ID and give error if none
         String packetIndex = node.get("id").asText();
         if(packetIndex == null) {
-            System.err.println("id in PUT request is not found");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "not found ID in PUT request");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(httpExchange, "invalid PUT request: not specified ID of process");
             return;
         }
 
         //  find how many services are there with such command, send error if none
         String routeToService = redisConnection.get(packetIndex);
         if(routeToService == null) {
-            System.err.println("there is no process on any service with such ID");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "no process with such ID");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(httpExchange, "invalid PUT request: no service has process with this ID");
             return;
         }
 
         //  redirect request, get response, send error if there none
         String serviceResponse = httpUtility.sendJsonPut(routeToService, requestPayload);
         if(serviceResponse == null) {
-            System.err.println("no answer on PUT request");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "no response to PUT request");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(
+                    httpExchange, "invalid PUT service response: no response to PUT from service"
+            );
             return;
         }
 
@@ -265,20 +259,14 @@ public class HttpGatewayContextHandler implements HttpHandler {
         String routeToService = redisConnection.get(String.valueOf(requestedIndex));
 
         if(routeToService == null) {
-            System.err.println("there is no process on any service with such ID");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "no process with such ID");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(httpExchange, "invalid GET request: no service has process with this ID");
             return;
         }
 
         //  send get request and if there is no response - send error
         String serviceResponse = httpUtility.sendJsonGet(routeToService+ "?id=" + requestedIndex);
         if(serviceResponse == null) {
-            System.err.println("there is no response received to GET");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "no response from service to GET");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(httpExchange, "invalid GET response: there is no response to GET request");
             return;
         }
 
@@ -293,10 +281,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
         //  get id and send error if there is none
         String responseId = node.get("id").asText();
         if(responseId == null) {
-            System.err.println("response has no ID");
-            JSONObject jsonResponse = new JSONObject();
-            jsonResponse.put("error", "response from service to GET has no ID");
-            sendResponse(httpExchange, jsonResponse.toString());
+            sendErrorResponse(httpExchange, "invalid GET response: response does not have ID");
             return;
         }
 
@@ -306,9 +291,24 @@ public class HttpGatewayContextHandler implements HttpHandler {
     }
 
     /**
+     * send error response to the client
+     * @param httpExchange connection entity
+     * @param errorMessage simple string-formatted error message
+     */
+    private void sendErrorResponse(HttpExchange httpExchange, String errorMessage) throws IOException {
+        //  make server print message as if it is error
+        System.err.println(errorMessage);
+
+        //  form json object from message and send it to the client
+        JSONObject jsonResponse = new JSONObject();
+        jsonResponse.put("error", errorMessage);
+        sendResponse(httpExchange, jsonResponse.toString());
+    }
+
+    /**
      * send response to client
      * @param httpExchange REST service connector
-     * @param response generated response for client
+     * @param response generated response for client in JSON-string format
      * @throws IOException i/o exception
      */
     private void sendResponse(HttpExchange httpExchange, String response) throws IOException {
