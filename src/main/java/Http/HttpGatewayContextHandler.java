@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lambdaworks.redis.RedisConnection;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import org.apache.http.conn.HttpHostConnectException;
 import org.json.JSONObject;
 
 import java.io.*;
@@ -139,6 +140,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
                 if (!availableServiceCommands.contains(nameOfService)) {
                     availableServiceCommands.add(nameOfService);
+                    System.out.println(nameOfService);
                 }
 
                 //  make response of successful connection establishment for service
@@ -201,8 +203,15 @@ public class HttpGatewayContextHandler implements HttpHandler {
             }
         }
 
+        String serviceResponse = null;
+
         //  redirect request to service
-        String serviceResponse = httpUtility.sendJsonPost(leastOccupiedService, requestPayload);
+        try {
+            serviceResponse = httpUtility.sendJsonPost(leastOccupiedService, requestPayload);
+        } catch (HttpHostConnectException exception) {
+            redisConnection.del(nameOfService);
+            redisConnection.del(node.get("address").asText() + "_mailboxSize", "0");
+        }
 
         //  if there is no response then send error
         if(serviceResponse == null) {
