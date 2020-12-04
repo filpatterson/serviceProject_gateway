@@ -11,6 +11,7 @@ import org.json.JSONObject;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 public class HttpGatewayContextHandler implements HttpHandler {
@@ -21,14 +22,17 @@ public class HttpGatewayContextHandler implements HttpHandler {
     //  instance of utility for HTTP operations;
     HttpUtility httpUtility;
 
-
     ArrayList<String> availableServiceCommands;
+
+    private static int redisGetResponsesCounter = 0;
+    HashMap<String, String> localCacheOfGetResponses;
 
     //  constructor to establish connection with db and with redis
     public HttpGatewayContextHandler(RedisConnection<String, String> redisConnection, HttpUtility httpUtility) {
         this.redisConnection = redisConnection;
         this.httpUtility = httpUtility;
         this.availableServiceCommands = new ArrayList<>();
+        localCacheOfGetResponses = new HashMap<>();
     }
 
     /**
@@ -209,7 +213,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
         try {
             serviceResponse = httpUtility.sendJsonPost(leastOccupiedService, requestPayload);
         } catch (HttpHostConnectException exception) {
-            redisConnection.del(nameOfService);
+            redisConnection.lrem(nameOfService, 1, leastOccupiedService);
             redisConnection.del(node.get("address").asText() + "_mailboxSize", "0");
         }
 
@@ -291,9 +295,14 @@ public class HttpGatewayContextHandler implements HttpHandler {
         //  check if there is such cached response and send it
         String cachedResponse = redisConnection.get("cached:" + requestedIndex);
         if(cachedResponse != null) {
-            System.out.println(redisConnection.get("cached:" + requestedIndex));
             sendResponse(httpExchange, cachedResponse);
             return;
+        } else {
+            cachedResponse = localCacheOfGetResponses.get("cached:" + requestedIndex);
+            if(cachedResponse != null) {
+                sendResponse(httpExchange, cachedResponse);
+                return;
+            }
         }
 
         //  find how many services are there with such command
@@ -332,8 +341,14 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
         //  if this response
         if(serviceResponse.contains("response")){
-            redisConnection.set("cached:" + responseId, "{\"cached\":true," + serviceResponse.substring(1));
-            System.out.println(redisConnection.get("cached:" + responseId));
+            if(localCacheOfGetResponses.size() < redisGetResponsesCounter) {
+                localCacheOfGetResponses.put("cached:" + responseId, "{\"cached\":true," + serviceResponse.substring(1));
+                System.out.println("entered get in local cache: " + localCacheOfGetResponses.get("cached:" + responseId));
+            } else {
+                redisConnection.set("cached:" + responseId, "{\"cached\":true," + serviceResponse.substring(1));
+                redisGetResponsesCounter++;
+                System.out.println("entered get in Redis cache: " + redisConnection.get("cached:" + responseId));
+            }
         }
         sendResponse(httpExchange, serviceResponse);
     }
