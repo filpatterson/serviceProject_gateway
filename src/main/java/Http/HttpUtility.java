@@ -96,6 +96,25 @@ public class HttpUtility {
         return responsePayload;
     }
 
+    public String sendServiceBroadcastJsonPost(String destinationPage, String jsonRequest) throws IOException {
+        StringEntity entity = new StringEntity(jsonRequest,
+                ContentType.APPLICATION_JSON);
+
+        CloseableHttpClient httpClient = HttpClients.createDefault();
+        HttpPost request = new HttpPost(destinationPage);
+        request.setHeader("Accept", "application/json");
+        request.setHeader("Content-Type", "application/json");
+        request.setHeader("Service-Call", "broadcast");
+        request.setEntity(entity);
+
+        CloseableHttpResponse response = httpClient.execute(request);
+        ResponseHandler<String> handler = new BasicResponseHandler();
+        String responsePayload = handler.handleResponse(response);
+        httpClient.close();
+        response.close();
+        return responsePayload;
+    }
+
     /**
      * send PUT request that will continue discussion with service
      * @param destinationPage where request must be delivered

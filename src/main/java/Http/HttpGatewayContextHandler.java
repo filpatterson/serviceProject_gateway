@@ -9,6 +9,7 @@ import org.json.JSONObject;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 public class HttpGatewayContextHandler implements HttpHandler {
@@ -19,10 +20,14 @@ public class HttpGatewayContextHandler implements HttpHandler {
     //  instance of utility for HTTP operations;
     HttpUtility httpUtility;
 
+
+    ArrayList<String> availableServiceCommands;
+
     //  constructor to establish connection with db and with redis
     public HttpGatewayContextHandler(RedisConnection<String, String> redisConnection, HttpUtility httpUtility) {
         this.redisConnection = redisConnection;
         this.httpUtility = httpUtility;
+        this.availableServiceCommands = new ArrayList<>();
     }
 
     /**
@@ -132,11 +137,33 @@ public class HttpGatewayContextHandler implements HttpHandler {
                     redisConnection.set(addressOfService + "_mailboxSize", "0");
                 }
 
+                if (!availableServiceCommands.contains(nameOfService)) {
+                    availableServiceCommands.add(nameOfService);
+                }
+
                 //  make response of successful connection establishment for service
                 JSONObject jsonResponse = new JSONObject();
                 jsonResponse.put("status", "successful connection to gateway");
                 jsonResponse.put("address", addressOfService);
                 sendResponse(httpExchange, jsonResponse.toString());
+                return;
+
+            } else if (httpExchange.getRequestHeaders().get("Service-Call").get(0).startsWith("broadcast:")) {
+                //  get type of broadcast activated
+                String broadcastingCommand = httpExchange.getRequestHeaders().get("Service-Call").get(0).substring(10);
+
+                //  if this broadcast is for all services
+                if(broadcastingCommand.equals("all")) {
+                    for (String availableServiceCommand : availableServiceCommands) {
+                        System.out.println("sending broadcast to services of command: " + availableServiceCommand);
+                        broadcastServiceCallToService(httpExchange ,requestPayload, availableServiceCommand);
+                    }
+
+                //  else this broadcast is required to be sent only to services attached to the broadcast header
+                } else {
+                    System.out.println("sending broadcast to services of command: " + broadcastingCommand);
+                    broadcastServiceCallToService(httpExchange, requestPayload, broadcastingCommand);
+                }
                 return;
             }
         }
@@ -334,5 +361,25 @@ public class HttpGatewayContextHandler implements HttpHandler {
         outputStream.write(response.getBytes());
         outputStream.flush();
         outputStream.close();
+    }
+
+    /**
+     * method for broadcasting message to the services that are available to command
+     * @param requestPayload message that must be transmitted
+     * @param availableServiceCommand command availability to which will be checked
+     * @throws IOException
+     */
+    private void broadcastServiceCallToService(HttpExchange httpExchange, String requestPayload, String availableServiceCommand) throws IOException {
+        long amountOfServicesAvailableToThisCommand = redisConnection.llen(availableServiceCommand);
+        List<String> availableServiceToThisCommand = redisConnection.lrange(
+                availableServiceCommand, 0, amountOfServicesAvailableToThisCommand - 1
+        );
+
+        for (String service : availableServiceToThisCommand) {
+            String serviceResponse = httpUtility.sendServiceBroadcastJsonPost(service, requestPayload);
+            System.out.println(serviceResponse);
+        }
+
+        sendResponse(httpExchange, "broadcast was performed");
     }
 }
