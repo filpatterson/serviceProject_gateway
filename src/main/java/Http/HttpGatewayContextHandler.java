@@ -125,14 +125,11 @@ public class HttpGatewayContextHandler implements HttpHandler {
                 //  get address of service
                 String addressOfService = node.get("address").asText();
 
-                //  push service address to the Redis and create counter for service current load state
+                //  if there is no mailbox of this service, then it means that there was no such service and gate
+                // needs to register it and create mailbox counter of this service
                 if(!redisConnection.exists(addressOfService + "_mailboxSize")) {
                     redisConnection.lpush(nameOfService, addressOfService);
                     redisConnection.set(addressOfService + "_mailboxSize", "0");
-                } else {
-                //  if there already is such service then send error message
-                    sendErrorResponse(httpExchange, "REDIS error: service with such address exists");
-                    return;
                 }
 
                 //  make response of successful connection establishment for service
@@ -255,6 +252,14 @@ public class HttpGatewayContextHandler implements HttpHandler {
                 split("\\?")[1].
                 split("=")[1]);
 
+        //  check if there is such cached response and send it
+        String cachedResponse = redisConnection.get("cached:" + requestedIndex);
+        if(cachedResponse != null) {
+            System.out.println(redisConnection.get("cached:" + requestedIndex));
+            sendResponse(httpExchange, cachedResponse);
+            return;
+        }
+
         //  find how many services are there with such command
         String routeToService = redisConnection.get(String.valueOf(requestedIndex));
 
@@ -265,6 +270,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
         //  send get request and if there is no response - send error
         String serviceResponse = httpUtility.sendJsonGet(routeToService+ "?id=" + requestedIndex);
+        System.out.println(serviceResponse);
         if(serviceResponse == null) {
             sendErrorResponse(httpExchange, "invalid GET response: there is no response to GET request");
             return;
@@ -287,6 +293,12 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
         //  remove process from redis and redirect response to client
         redisConnection.del(responseId);
+
+        //  if this response
+        if(serviceResponse.contains("response")){
+            redisConnection.set("cached:" + responseId, "{\"cached\":true," + serviceResponse.substring(1));
+            System.out.println(redisConnection.get("cached:" + responseId));
+        }
         sendResponse(httpExchange, serviceResponse);
     }
 
