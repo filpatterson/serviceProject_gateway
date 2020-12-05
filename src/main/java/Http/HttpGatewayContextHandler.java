@@ -24,6 +24,8 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
     ArrayList<String> availableServiceCommands;
 
+    ArrayList<String> agregatedServiceResponses;
+
     private static int redisGetResponsesCounter = 0;
     HashMap<String, String> localCacheOfGetResponses;
 
@@ -33,6 +35,7 @@ public class HttpGatewayContextHandler implements HttpHandler {
         this.httpUtility = httpUtility;
         this.availableServiceCommands = new ArrayList<>();
         localCacheOfGetResponses = new HashMap<>();
+        agregatedServiceResponses = new ArrayList<>();
     }
 
     /**
@@ -170,6 +173,17 @@ public class HttpGatewayContextHandler implements HttpHandler {
                     System.out.println("sending broadcast to services of command: " + broadcastingCommand);
                     broadcastServiceCallToService(httpExchange, requestPayload, broadcastingCommand);
                 }
+
+                //  collect all received responses into one
+                String allResponse = "";
+                for(String agregatedResponse : agregatedServiceResponses) {
+                    allResponse += agregatedResponse + "~~~";
+                    System.out.println(allResponse);
+                }
+
+                //  send responses to the client and clear buffer of responses
+                agregatedServiceResponses.clear();
+                sendResponse(httpExchange, "broadcast response: " + allResponse);
                 return;
             }
         }
@@ -401,15 +415,17 @@ public class HttpGatewayContextHandler implements HttpHandler {
 
         //  find out broadcast requester port
         int broadcastRequesterId = httpExchange.getRemoteAddress().getPort();
+        System.out.println(broadcastRequesterId + "\n\n\n\n\n\n");
 
         for (String service : availableServiceToThisCommand) {
+            System.out.println("where to send: " + service.split(":")[2].split("/")[0]);
+
             //  send broadcast message only if it is not the same port as requester
-            if(broadcastRequesterId == Integer.parseInt(service.split(":")[2].split("/")[0])) {
+            if(broadcastRequesterId != Integer.parseInt(service.split(":")[2].split("/")[0])) {
                 String serviceResponse = httpUtility.sendServiceBroadcastJsonPost(service, requestPayload);
                 System.out.println(serviceResponse);
+                agregatedServiceResponses.add(serviceResponse);
             }
         }
-
-        sendResponse(httpExchange, "broadcast was performed");
     }
 }
