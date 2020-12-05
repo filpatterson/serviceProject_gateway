@@ -399,9 +399,15 @@ public class HttpGatewayContextHandler implements HttpHandler {
                 availableServiceCommand, 0, amountOfServicesAvailableToThisCommand - 1
         );
 
+        //  find out broadcast requester port
+        int broadcastRequesterId = httpExchange.getRemoteAddress().getPort();
+
         for (String service : availableServiceToThisCommand) {
-            String serviceResponse = httpUtility.sendServiceBroadcastJsonPost(service, requestPayload);
-            System.out.println(serviceResponse);
+            //  send broadcast message only if it is not the same port as requester
+            if(broadcastRequesterId == Integer.parseInt(service.split(":")[2].split("/")[0])) {
+                String serviceResponse = httpUtility.sendServiceBroadcastJsonPost(service, requestPayload);
+                System.out.println(serviceResponse);
+            }
         }
 
         sendResponse(httpExchange, "broadcast was performed");
