@@ -29,6 +29,8 @@ public class HttpGatewayContextHandler implements HttpHandler {
     private static int redisGetResponsesCounter = 0;
     HashMap<String, String> localCacheOfGetResponses;
 
+    private int broadcastRequesterId;
+
     //  constructor to establish connection with db and with redis
     public HttpGatewayContextHandler(RedisConnection<String, String> redisConnection, HttpUtility httpUtility) {
         this.redisConnection = redisConnection;
@@ -50,7 +52,10 @@ public class HttpGatewayContextHandler implements HttpHandler {
                 handleGetResponse(httpExchange);
                 return;
             }
+            broadcastRequesterId = httpExchange.getRemoteAddress().getPort();
 
+
+//            httpExchange.getRequestURI()
             //  otherwise, request must have payload in its body
             String requestBody;
             //  try to get payload from request body
@@ -124,16 +129,19 @@ public class HttpGatewayContextHandler implements HttpHandler {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode node = objectMapper.readValue(requestPayload, ObjectNode.class);
 
-        //  get name of requested service and make error response if none
-        String nameOfService = node.get("functionName").asText();
-        if(nameOfService == null) {
-            sendErrorResponse(httpExchange, "invalid POST request: function name not found in request");
-            return;
-        }
+
 
         //  check if received request is one for establishing connection between gateway and service
         if(httpExchange.getRequestHeaders().containsKey("Service-Call")) {
+            broadcastRequesterId = Integer.parseInt(httpExchange.getRequestHeaders().get("ServicePort").get(0));
             if(httpExchange.getRequestHeaders().get("Service-Call").get(0).equals("true")) {
+
+                //  get name of requested service and make error response if none
+                String nameOfService = node.get("functionName").asText();
+                if(nameOfService == null) {
+                    sendErrorResponse(httpExchange, "invalid POST request: function name not found in request");
+                    return;
+                }
 
                 //  get address of service
                 String addressOfService = node.get("address").asText();
@@ -186,6 +194,13 @@ public class HttpGatewayContextHandler implements HttpHandler {
                 sendResponse(httpExchange, "broadcast response: " + allResponse);
                 return;
             }
+        }
+
+        //  get name of requested service and make error response if none
+        String nameOfService = node.get("functionName").asText();
+        if(nameOfService == null) {
+            sendErrorResponse(httpExchange, "invalid POST request: function name not found in request");
+            return;
         }
 
         //  find how many services are there with such command and send error if none
@@ -246,15 +261,17 @@ public class HttpGatewayContextHandler implements HttpHandler {
         node = objectMapper.readValue(serviceResponse, ObjectNode.class);
         String id = node.get("id").asText();
         if(id == null) {
-            sendErrorResponse(httpExchange, "invalid POST service response: response has no ID");
+            sendResponse(httpExchange, serviceResponse);
             return;
+        } else {
+            //  register process in redis
+            redisConnection.set(id, leastOccupiedService);
+
+            //  redirect response to client
+            sendResponse(httpExchange, serviceResponse);
         }
 
-        //  register process in redis
-        redisConnection.set(id, leastOccupiedService);
 
-        //  redirect response to client
-        sendResponse(httpExchange, serviceResponse);
     }
 
     /**
@@ -414,8 +431,8 @@ public class HttpGatewayContextHandler implements HttpHandler {
         );
 
         //  find out broadcast requester port
-        int broadcastRequesterId = httpExchange.getRemoteAddress().getPort();
-        System.out.println(broadcastRequesterId + "\n\n\n\n\n\n");
+
+        System.out.println("requester id: "+broadcastRequesterId + "\n\n\n\n\n\n");
 
         for (String service : availableServiceToThisCommand) {
             System.out.println("where to send: " + service.split(":")[2].split("/")[0]);

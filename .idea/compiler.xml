@@ -9,5 +9,8 @@
         <module name="serviceProject_gateway" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="serviceProject_gateway" target="11" />
+    </bytecodeTargetLevel>
   </component>
 </project>
